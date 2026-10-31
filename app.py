@@ -11,6 +11,9 @@ import uid_generator_pb2
 import visit_count_pb2
 from google.protobuf.message import DecodeError
 from collections import OrderedDict
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
@@ -28,7 +31,6 @@ BD_LIKE_URL          = "https://clientbp.ggpolarbear.com/LikeProfile"
 
 
 def load_tokens(region):
-    """BD only — always loads token_bd.json"""
     try:
         with open("token_bd.json", "r") as f:
             return json.load(f)
@@ -95,7 +97,6 @@ async def send_multiple_requests(uid, region, url):
         if not tokens:
             return None
         tasks = []
-        # ✅ safe: 100 বা token সংখ্যা — যেটা ছোট
         for i in range(min(100, len(tokens))):
             token = tokens[i]["token"]
             tasks.append(send_request(encrypted_uid, token, url))
@@ -125,7 +126,6 @@ def enc(uid):
 
 
 def make_request(encrypt, region, token):
-    """BD only — always uses BD PersonalShow URL"""
     try:
         edata = bytes.fromhex(encrypt)
         headers = {
@@ -179,7 +179,6 @@ def handle_requests():
     if not uid or not region:
         return {"error": "UID and region are required"}, 400
 
-    # ✅ BD-only enforce
     if region != "BD":
         return app.response_class(
             response=json.dumps(
@@ -208,9 +207,7 @@ def handle_requests():
                 raise Exception("Failed to get initial info.")
             before_like = before.AccountInfo.Likes
 
-            # ✅ BD LikeProfile URL
             url = BD_LIKE_URL
-
             asyncio.run(send_multiple_requests(uid, region, url))
 
             after = make_request(encrypted_uid, region, token)
