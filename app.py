@@ -6,14 +6,12 @@ import binascii
 import aiohttp
 import requests
 import json
+import random
 import like_pb2
 import uid_generator_pb2
 import visit_count_pb2
 from google.protobuf.message import DecodeError
 from collections import OrderedDict
-import urllib3
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
@@ -22,15 +20,19 @@ VALID_API_KEYS = {
     "hkysxbhyws"
 }
 
-daily_limit = 1000
+daily_limit = 100
 used_count = 0
 
 # ✅ BD SERVER URLs (only BD supported)
 BD_PERSONAL_SHOW_URL = "https://clientbp.ggpolarbear.com/GetPlayerPersonalShow"
 BD_LIKE_URL          = "https://clientbp.ggpolarbear.com/LikeProfile"
 
+# ✅ প্রতি রিকোয়েস্টে কত লাইক যাবে (token_bd.json এ ২০০ টোকেন থাকলেও শুধু ১০০ ব্যবহার হবে)
+LIKES_PER_REQUEST = 100
+
 
 def load_tokens(region):
+    """BD only — always loads token_bd.json"""
     try:
         with open("token_bd.json", "r") as f:
             return json.load(f)
@@ -86,6 +88,11 @@ async def send_request(encrypted_uid, token, url):
 
 
 async def send_multiple_requests(uid, region, url):
+    """
+    ✅ ২০০+ টোকেন থেকে র‍্যান্ডম ১০০টি বেছে নেয়
+    ✅ প্রতি রিকোয়েস্টে ঠিক ১০০টি লাইক দেয়
+    ✅ সব টোকেন ঘুরে ঘুরে ব্যবহার হয়
+    """
     try:
         protobuf_message = create_protobuf_message(uid, region)
         if protobuf_message is None:
@@ -93,13 +100,20 @@ async def send_multiple_requests(uid, region, url):
         encrypted_uid = encrypt_message(protobuf_message)
         if encrypted_uid is None:
             return None
+
         tokens = load_tokens(region)
         if not tokens:
             return None
+
+        # ✅ প্রতি রিকোয়েস্টে সর্বোচ্চ LIKES_PER_REQUEST (১০০) টোকেন
+        use_count = min(LIKES_PER_REQUEST, len(tokens))
+        selected_tokens = random.sample(tokens, use_count)
+
         tasks = []
-        for i in range(min(100, len(tokens))):
-            token = tokens[i]["token"]
+        for tok in selected_tokens:
+            token = tok["token"]
             tasks.append(send_request(encrypted_uid, token, url))
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return results
     except Exception as e:
@@ -126,6 +140,7 @@ def enc(uid):
 
 
 def make_request(encrypt, region, token):
+    """BD only — always uses BD PersonalShow URL"""
     try:
         edata = bytes.fromhex(encrypt)
         headers = {
@@ -179,6 +194,7 @@ def handle_requests():
     if not uid or not region:
         return {"error": "UID and region are required"}, 400
 
+    # ✅ BD-only enforce
     if region != "BD":
         return app.response_class(
             response=json.dumps(
@@ -207,7 +223,9 @@ def handle_requests():
                 raise Exception("Failed to get initial info.")
             before_like = before.AccountInfo.Likes
 
+            # ✅ BD LikeProfile URL
             url = BD_LIKE_URL
+
             asyncio.run(send_multiple_requests(uid, region, url))
 
             after = make_request(encrypted_uid, region, token)
@@ -261,6 +279,20 @@ def remain_info():
         "reset_info": "4:00 AM IST"
     }
     return jsonify(data)
+
+
+@app.route('/tokens', methods=['GET'])
+def token_info():
+    """✅ টোকেন সংখ্যা যাচাই করার জন্য নতুন এন্ডপয়েন্ট"""
+    tokens = load_tokens("BD")
+    total = len(tokens) if tokens else 0
+    return jsonify({
+        "region": "BD",
+        "total_tokens_in_file": total,
+        "tokens_used_per_request": min(LIKES_PER_REQUEST, total),
+        "max_likes_per_request": min(LIKES_PER_REQUEST, total),
+        "rotation_enabled": True
+    })
 
 
 if __name__ == '__main__':
